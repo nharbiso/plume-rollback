@@ -1,0 +1,71 @@
+#!/bin/bash
+
+# check executing directory and arguments
+if [ "$(basename "$(pwd)")" != "plume-rollback" ]; then
+    echo "Error: This script must be run from \`plume-rollback\` directory"
+    exit 1
+fi
+
+if ! [ -d "$1" ]; then
+    echo "Given Plume directory does not exist: $1"
+    exit 1
+fi
+
+FIXED_COMMIT="19f18421bcd9cb9d1654de24f9a04747691036b7"
+PLUME_PATH=$(realpath "$1")
+POLICY_PATH=$(pwd)
+
+cd "$PLUME_PATH"
+# checkout to first commit (stashing and unstashing changes for Paralegal)
+git stash > /dev/null 2>&1
+git checkout main > /dev/null 2>&1
+
+# get list of all commits
+log_output=$(git log --format=%P)
+IFS=$'\n' read -rd '' -a commit_hashes <<<"$log_output"
+
+# sort hashes into two lists:
+# - hashes_after: an array of hashes of all commits that come after 
+#   FIXED_COMMIT, from FIXED_COMMIT forwards
+# - hashes_before: an array of hashes of all commits that come before 
+#   FIXED_COMMIT, from FIXED_COMMIT backwards
+declare -a hashes_before=()
+declare -a hashes_after=()
+after=1
+for commit_hash in "${commit_hashes[@]}"; do
+    commit_hash=$(echo $commit_hash | awk '{print $NF}')
+
+    if [ $after == 1 ]; then 
+        hashes_after=( "$commit_hash" "${hashes_after[@]}" )
+    else
+        hashes_before+=("$commit_hash")
+    fi
+    if [ "$commit_hash" = "$FIXED_COMMIT" ]; then
+        after=0
+        hashes_before+=("$commit_hash")
+    fi
+done
+
+# iterate through all hashes after FIXED_COMMIT,
+# running the policy on each
+# echo "MOVING FORWARD THROUGH COMMITS"
+# for commit_hash in "${hashes_after[@]}"; do
+#     git checkout "$commit_hash" > /dev/null 2>&1
+#     echo "At commit: $commit_hash"
+#     cd "$POLICY_PATH" > /dev/null 2>&1
+#     cargo run --quiet "$PLUME_PATH"
+#     echo -e "\n"
+#     cd "$PLUME_PATH" > /dev/null 2>&1
+# done
+
+# iterate through all hashes before FIXED_COMMIT,
+# running the policy on each
+echo "MOVING BACKWARDS THROUGH COMMITS"
+for commit_hash in "${hashes_before[@]}"; do
+    git checkout "$commit_hash" > /dev/null 2>&1
+    echo "At commit: $commit_hash"
+    cd "$POLICY_PATH" > /dev/null 2>&1
+    cargo run --quiet "$PLUME_PATH"
+    echo -e "\n"
+    cd "$PLUME_PATH" > /dev/null 2>&1
+done
